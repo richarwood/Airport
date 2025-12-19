@@ -82,13 +82,8 @@ jobs:
             if (openIssues.some(i => i.title === title)) {
               core.info('An open issue with the same title already exists; not creating a new one.');
             } else {
-              const body = `The scheduled ping of https://richarwood-airport.hf.space/ failed.
-
-Run: ${process.env.GITHUB_RUN_URL || `${process.env.GITHUB_SERVER_URL}/${context.repo.owner}/${context.repo.repo}/actions/runs/${process.env.GITHUB_RUN_ID}`}
-
-HTTP status: ${status}
-
-Please check the Actions run logs for details.`;
+              const runUrl = process.env.GITHUB_RUN_URL || (process.env.GITHUB_SERVER_URL + '/' + context.repo.owner + '/' + context.repo.repo + '/actions/runs/' + process.env.GITHUB_RUN_ID);
+              const body = 'The scheduled ping of https://richarwood-airport.hf.space/ failed.\n\nRun: ' + runUrl + '\n\nHTTP status: ' + status + '\n\nPlease check the Actions run logs for details.';
               await github.rest.issues.create({
                 owner: context.repo.owner,
                 repo: context.repo.repo,

@@ -1,0 +1,100 @@
+name: Ping alt Hugging Face domain (random daily)
+
+on:
+  schedule:
+    # run hourly and let the job pick a random hour once per day (UTC)
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping-alt-space:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set UTC date and hour
+        run: |
+          echo "DATE=$(date -u +%F)" >> $GITHUB_ENV
+          echo "HOUR=$(date -u +%H)" >> $GITHUB_ENV
+
+      - name: Restore daily marker cache
+        uses: actions/cache@v4
+        with:
+          path: .hf-ping-alt-marker
+          key: hf-ping-alt-${{ env.DATE }}
+
+      - name: Decide whether to run today
+        env:
+          DATE: ${{ env.DATE }}
+          HOUR: ${{ env.HOUR }}
+        run: |
+          if [ -f .hf-ping-alt-marker/ran ]; then
+            echo "Already ran today (${DATE}); exiting."
+            exit 0
+          fi
+          RANDOM_HOUR=$(( ( RANDOM ) % 24 ))
+          echo "Random hour selected: $RANDOM_HOUR; current UTC hour: $HOUR"
+          if [ "$RANDOM_HOUR" -ne "$HOUR" ]; then
+            echo "Not the selected hour; exiting."
+            exit 0
+          fi
+          echo "Selected hour matches, proceeding to ping."
+
+      - name: Ping richarwood-airport.hf.space
+        env:
+          ALT_SPACE_URL: "https://richarwood-airport.hf.space/"
+        run: |
+          echo "Pinging $ALT_SPACE_URL"
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -L --max-time 30 -A "github-action-pinger/1.0" "$ALT_SPACE_URL")
+          echo "HTTP status: $HTTP_STATUS"
+          echo "HTTP_STATUS=$HTTP_STATUS" >> $GITHUB_ENV
+          if [ "$HTTP_STATUS" -eq 200 ]; then
+            mkdir -p .hf-ping-alt-marker
+            echo "ran" > .hf-ping-alt-marker/ran
+            echo "Ping succeeded; marker written."
+            exit 0
+          else
+            echo "Ping failed with status $HTTP_STATUS"
+            # non-zero to mark job failed so failure() steps run
+            exit 2
+          fi
+
+      - name: Save daily marker cache
+        if: success()
+        uses: actions/cache@v4
+        with:
+          path: .hf-ping-alt-marker
+          key: hf-ping-alt-${{ env.DATE }}
+
+      - name: Create GitHub issue on failure
+        if: failure()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const date = new Date().toISOString().slice(0,10);
+            const status = process.env.HTTP_STATUS || 'unknown';
+            const title = `Alt HF Space ping failed for ${context.repo.owner}/${context.repo.repo} (${date}) — status ${status}`;
+            // avoid duplicate open issues with same title
+            const { data: openIssues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              per_page: 100
+            });
+            if (openIssues.some(i => i.title === title)) {
+              core.info('An open issue with the same title already exists; not creating a new one.');
+            } else {
+              const body = `The scheduled ping of https://richarwood-airport.hf.space/ failed.
+
+Run: ${process.env.GITHUB_RUN_URL || `${process.env.GITHUB_SERVER_URL}/${context.repo.owner}/${context.repo.repo}/actions/runs/${process.env.GITHUB_RUN_ID}`}
+
+HTTP status: ${status}
+
+Please check the Actions run logs for details.`;
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['hf-ping-alt-failure']
+              });
+              core.info('Issue created.');
+            }
